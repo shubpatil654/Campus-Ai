@@ -1,0 +1,693 @@
+const express = require('express');
+const router = express.Router();
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+const { body, validationResult } = require('express-validator');
+const { protect } = require('../middleware/auth');
+const { supabase, supabaseAdmin } = require('../config/database');
+const { sendOTPEmail, verifyConnection } = require('../services/emailService');
+const { generateOTP, storeOTP, getOTP, deleteOTP, storeTempUser, getTempUser, deleteTempUser } = require('../services/otpService');
+
+// Configure multer for file uploads
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const uploadDir = path.join(__dirname, '../uploads/profile-pictures');
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, `profile-${uniqueSuffix}${path.extname(file.originalname)}`);
+  }
+});
+
+const upload = multer({
+  storage: storage,
+  limits: {
+    fileSize: 5 * 1024 * 1024 // 5MB limit
+  },
+  fileFilter: (req, file, cb) => {
+    console.log('Multer file filter - file:', file);
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only image files are allowed'), false);
+    }
+  }
+});
+
+// @desc    Send OTP for email verification
+// @route   POST /api/auth/send-otp
+// @access  Public
+router.post('/send-otp', [
+  body('name').notEmpty().withMessage('Name is required'),
+  body('email').isEmail().withMessage('Please include a valid email'),
+  body('password').isLength({ min: 6 }).withMessage('Password must be at least 6 characters'),
+  body('phone').notEmpty().withMessage('Phone number is required')
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Validation error', 
+        errors: errors.array() 
+      });
+    }
+
+    const { name, email, password, phone } = req.body;
+
+    // Check if user already exists
+    const { data: existingUser } = await supabaseAdmin
+      .from('users')
+      .select('id')
+      .eq('email', email)
+      .single();
+
+    if (existingUser) {
+      return res.status(400).json({
+        success: false,
+        message: 'User already exists with this email'
+      });
+    }
+
+    // Generate OTP
+    const otp = generateOTP();
+
+    // Store OTP in Redis
+    const otpStored = await storeOTP(email, otp);
+    if (!otpStored) {
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to generate verification code'
+      });
+    }
+
+    // Store temporary user data
+    const userData = {
+      name,
+      email,
+      password,
+      phone,
+      role: 'student'
+    };
+    
+    const userStored = await storeTempUser(email, userData);
+    if (!userStored) {
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to process registration data'
+      });
+    }
+
+    // Send OTP email
+    try {
+      await sendOTPEmail(email, otp, name);
+      
+      res.json({
+        success: true,
+        message: 'Verification code sent to your email',
+        email: email
+      });
+    } catch (emailError) {
+      console.error('Email sending failed:', emailError);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to send verification email. Please try again.'
+      });
+    }
+
+  } catch (error) {
+    console.error('Send OTP error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error'
+    });
+  }
+});
+
+// @desc    Verify OTP and complete registration
+// @route   POST /api/auth/verify-otp
+// @access  Public
+router.post('/verify-otp', [
+  body('email').isEmail().withMessage('Please include a valid email'),
+  body('otp').isLength({ min: 6, max: 6 }).withMessage('OTP must be 6 digits')
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Validation error', 
+        errors: errors.array() 
+      });
+    }
+
+    const { email, otp } = req.body;
+
+    // Get stored OTP
+    const storedOTP = await getOTP(email);
+    if (!storedOTP) {
+      return res.status(400).json({
+        success: false,
+        message: 'Verification code expired or not found. Please request a new one.'
+      });
+    }
+
+    // Verify OTP
+    if (storedOTP !== otp) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid verification code'
+      });
+    }
+
+    // Get temporary user data
+    const userData = await getTempUser(email);
+    if (!userData) {
+      return res.status(400).json({
+        success: false,
+        message: 'Registration data expired. Please start over.'
+      });
+    }
+
+    // Hash password
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(userData.password, salt);
+
+    // Create user in database
+    const { data: user, error } = await supabaseAdmin
+      .from('users')
+      .insert([
+        {
+          name: userData.name,
+          email: userData.email,
+          password: hashedPassword,
+          phone: userData.phone,
+          role: userData.role,
+          is_verified: true
+        }
+      ])
+      .select('id, name, email, role, phone, created_at')
+      .single();
+
+    if (error) {
+      console.error('Supabase error:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to create account'
+      });
+    }
+
+    // Clean up Redis data
+    await deleteOTP(email);
+    await deleteTempUser(email);
+
+    // Create JWT token
+    const token = jwt.sign(
+      { id: user.id },
+      process.env.JWT_SECRET || 'fallback_secret',
+      { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
+    );
+
+    res.status(201).json({
+      success: true,
+      message: 'Account created successfully! Welcome to CampusAI!',
+      user,
+      token
+    });
+
+  } catch (error) {
+    console.error('Verify OTP error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error'
+    });
+  }
+});
+
+// @desc    Resend OTP
+// @route   POST /api/auth/resend-otp
+// @access  Public
+router.post('/resend-otp', [
+  body('email').isEmail().withMessage('Please include a valid email')
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Validation error', 
+        errors: errors.array() 
+      });
+    }
+
+    const { email } = req.body;
+
+    // Check if user already exists
+    const { data: existingUser } = await supabaseAdmin
+      .from('users')
+      .select('id')
+      .eq('email', email)
+      .single();
+
+    if (existingUser) {
+      return res.status(400).json({
+        success: false,
+        message: 'User already exists with this email'
+      });
+    }
+
+    // Get temporary user data
+    const userData = await getTempUser(email);
+    if (!userData) {
+      return res.status(400).json({
+        success: false,
+        message: 'No pending registration found. Please start over.'
+      });
+    }
+
+    // Generate new OTP
+    const otp = generateOTP();
+
+    // Store new OTP
+    const otpStored = await storeOTP(email, otp);
+    if (!otpStored) {
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to generate new verification code'
+      });
+    }
+
+    // Send new OTP email
+    try {
+      await sendOTPEmail(email, otp, userData.name);
+      
+      res.json({
+        success: true,
+        message: 'New verification code sent to your email',
+        email: email
+      });
+    } catch (emailError) {
+      console.error('Email sending failed:', emailError);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to send verification email. Please try again.'
+      });
+    }
+
+  } catch (error) {
+    console.error('Resend OTP error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error'
+    });
+  }
+});
+
+// @desc    Login user
+// @route   POST /api/auth/login
+// @access  Public
+router.post('/login', [
+  body('email').isEmail().withMessage('Please include a valid email'),
+  body('password').exists().withMessage('Password is required')
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Validation error', 
+        errors: errors.array() 
+      });
+    }
+
+    const { email, password } = req.body;
+
+    // Check if user exists
+    const { data: user, error } = await supabaseAdmin
+      .from('users')
+      .select('*')
+      .eq('email', email)
+      .single();
+
+    if (error || !user) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid credentials'
+      });
+    }
+
+    // Check password
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid credentials'
+      });
+    }
+
+    // Create JWT token
+    const token = jwt.sign(
+      { id: user.id },
+      process.env.JWT_SECRET || 'fallback_secret',
+      { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
+    );
+
+    // Remove password from response
+    const { password: _, ...userWithoutPassword } = user;
+
+    res.json({
+      success: true,
+      message: 'Login successful',
+      user: userWithoutPassword,
+      token
+    });
+
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error'
+    });
+  }
+});
+
+// @desc    Get current user
+// @route   GET /api/auth/me
+// @access  Private
+router.get('/me', protect, async (req, res) => {
+  try {
+    const { data: user, error } = await supabaseAdmin
+      .from('users')
+      .select('*')
+      .eq('id', req.user.id)
+      .single();
+
+    if (error || !user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Remove password from response
+    const { password: _, ...userWithoutPassword } = user;
+
+    // Convert snake_case to camelCase for frontend
+    const frontendUser = {
+      ...userWithoutPassword,
+      dateOfBirth: userWithoutPassword.date_of_birth,
+      currentSchool: userWithoutPassword.current_school,
+      currentClass: userWithoutPassword.current_class,
+      boardOfStudy: userWithoutPassword.board_of_study,
+      expectedMarks: userWithoutPassword.expected_marks,
+      interestedStreams: userWithoutPassword.interested_streams,
+      preferredLocation: userWithoutPassword.preferred_location,
+      budgetRange: userWithoutPassword.budget_range,
+      parentName: userWithoutPassword.parent_name,
+      parentPhone: userWithoutPassword.parent_phone,
+      parentOccupation: userWithoutPassword.parent_occupation,
+      address: userWithoutPassword.address,
+      city: userWithoutPassword.city,
+      state: userWithoutPassword.state,
+      pincode: userWithoutPassword.pincode,
+      goals: userWithoutPassword.goals,
+      hobbies: userWithoutPassword.hobbies,
+      achievements: userWithoutPassword.achievements,
+      subjects: userWithoutPassword.subjects,
+      profilePicture: userWithoutPassword.profile_picture
+    };
+
+    // Remove snake_case fields
+    delete frontendUser.date_of_birth;
+    delete frontendUser.current_school;
+    delete frontendUser.current_class;
+    delete frontendUser.board_of_study;
+    delete frontendUser.expected_marks;
+    delete frontendUser.interested_streams;
+    delete frontendUser.preferred_location;
+    delete frontendUser.budget_range;
+    delete frontendUser.parent_name;
+    delete frontendUser.parent_phone;
+    delete frontendUser.parent_occupation;
+    delete frontendUser.address;
+    delete frontendUser.city;
+    delete frontendUser.state;
+    delete frontendUser.pincode;
+    delete frontendUser.goals;
+    delete frontendUser.hobbies;
+    delete frontendUser.achievements;
+    delete frontendUser.subjects;
+    delete frontendUser.profile_picture;
+
+    res.json({
+      success: true,
+      user: frontendUser
+    });
+
+  } catch (error) {
+    console.error('Get user error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error'
+    });
+  }
+});
+
+// @desc    Update user profile
+// @route   PUT /api/auth/profile
+// @access  Private
+router.put('/profile', protect, [
+  body('name').optional().notEmpty().withMessage('Name cannot be empty'),
+  body('phone').optional().custom((value) => {
+    if (!value || value.trim() === '') return true; // Allow empty
+    return /^[6-9]\d{9}$/.test(value.trim());
+  }).withMessage('Please provide a valid 10-digit mobile number'),
+  body('dateOfBirth').optional().custom((value) => {
+    if (!value || value.trim() === '') return true; // Allow empty
+    return !isNaN(Date.parse(value));
+  }).withMessage('Please provide a valid date'),
+  body('gender').optional().isIn(['Male', 'Female', 'Other']).withMessage('Please select a valid gender'),
+  body('currentClass').optional().isIn(['8th', '9th', '10th', '11th', '12th']).withMessage('Please select a valid class'),
+  body('expectedMarks').optional().custom((value) => {
+    if (!value || value.toString().trim() === '') return true; // Allow empty
+    const num = parseFloat(value);
+    return !isNaN(num) && num >= 0 && num <= 100;
+  }).withMessage('Expected marks must be between 0 and 100'),
+  body('parentPhone').optional().custom((value) => {
+    if (!value || value.trim() === '') return true; // Allow empty
+    return /^[6-9]\d{9}$/.test(value.trim());
+  }).withMessage('Please provide a valid 10-digit mobile number for parent')
+], async (req, res) => {
+  try {
+    console.log('Profile update request body:', req.body);
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      console.log('Profile update validation errors:', errors.array());
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Validation error', 
+        errors: errors.array() 
+      });
+    }
+
+    const updateData = req.body;
+    
+    // Remove fields that shouldn't be updated directly
+    delete updateData.id;
+    delete updateData.email;
+    delete updateData.password;
+    delete updateData.role;
+    delete updateData.created_at;
+    delete updateData.updated_at;
+
+    // Convert camelCase to snake_case for database fields
+    const dbUpdateData = {};
+    const fieldMapping = {
+      dateOfBirth: 'date_of_birth',
+      currentSchool: 'current_school',
+      currentClass: 'current_class',
+      boardOfStudy: 'board_of_study',
+      expectedMarks: 'expected_marks',
+      interestedStreams: 'interested_streams',
+      preferredLocation: 'preferred_location',
+      budgetRange: 'budget_range',
+      parentName: 'parent_name',
+      parentPhone: 'parent_phone',
+      parentOccupation: 'parent_occupation',
+      profilePicture: 'profile_picture'
+    };
+
+    // Map frontend fields to database fields
+    Object.keys(updateData).forEach(key => {
+      if (updateData[key] !== undefined && updateData[key] !== null && updateData[key] !== '') {
+        const dbKey = fieldMapping[key] || key;
+        dbUpdateData[dbKey] = updateData[key];
+      }
+    });
+
+    // Update user in database
+    const { data: user, error } = await supabaseAdmin
+      .from('users')
+      .update(dbUpdateData)
+      .eq('id', req.user.id)
+      .select('*')
+      .single();
+
+    if (error) {
+      console.error('Supabase update error:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to update profile'
+      });
+    }
+
+    // Remove password from response
+    const { password: _, ...userWithoutPassword } = user;
+
+    res.json({
+      success: true,
+      message: 'Profile updated successfully',
+      user: userWithoutPassword
+    });
+
+  } catch (error) {
+    console.error('Update profile error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error'
+    });
+  }
+});
+
+// @desc    Test upload endpoint
+// @route   POST /api/auth/test-upload
+// @access  Private
+router.post('/test-upload', protect, upload.single('profilePicture'), async (req, res) => {
+  try {
+    console.log('Test upload - req.file:', req.file);
+    console.log('Test upload - req.body:', req.body);
+    res.json({ success: true, file: req.file, body: req.body });
+  } catch (error) {
+    console.error('Test upload error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// @desc    Upload profile picture
+// @route   POST /api/auth/upload-profile-picture
+// @access  Private
+router.post('/upload-profile-picture', protect, upload.single('profilePicture'), async (req, res) => {
+  try {
+    console.log('Upload request received:', {
+      hasFile: !!req.file,
+      userId: req.user?.id,
+      body: req.body,
+      files: req.files,
+      fileInfo: req.file ? {
+        originalname: req.file.originalname,
+        mimetype: req.file.mimetype,
+        size: req.file.size,
+        filename: req.file.filename
+      } : null
+    });
+
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: 'No image file provided'
+      });
+    }
+
+    // Get the file path relative to the server root
+    const filePath = `/uploads/profile-pictures/${req.file.filename}`;
+    const fullUrl = `${req.protocol}://${req.get('host')}${filePath}`;
+
+    // Update user's profile picture in database
+    const { data: user, error } = await supabaseAdmin
+      .from('users')
+      .update({ profile_picture: fullUrl })
+      .eq('id', req.user.id)
+      .select('*')
+      .single();
+
+    if (error) {
+      // If database update fails, delete the uploaded file
+      fs.unlinkSync(req.file.path);
+      throw error;
+    }
+
+    // Convert snake_case to camelCase for frontend
+    const frontendUser = {
+      ...user,
+      dateOfBirth: user.date_of_birth,
+      currentSchool: user.current_school,
+      currentClass: user.current_class,
+      boardOfStudy: user.board_of_study,
+      expectedMarks: user.expected_marks,
+      interestedStreams: user.interested_streams,
+      budgetRange: user.budget_range,
+      parentName: user.parent_name,
+      parentPhone: user.parent_phone,
+      parentOccupation: user.parent_occupation,
+      address: user.address,
+      city: user.city,
+      state: user.state,
+      pincode: user.pincode,
+      goals: user.goals,
+      hobbies: user.hobbies,
+      achievements: user.achievements,
+      subjects: user.subjects,
+      profilePicture: user.profile_picture
+    };
+
+    // Remove snake_case fields
+    delete frontendUser.date_of_birth;
+    delete frontendUser.current_school;
+    delete frontendUser.current_class;
+    delete frontendUser.board_of_study;
+    delete frontendUser.expected_marks;
+    delete frontendUser.interested_streams;
+    delete frontendUser.budget_range;
+    delete frontendUser.parent_name;
+    delete frontendUser.parent_phone;
+    delete frontendUser.parent_occupation;
+    delete frontendUser.address;
+    delete frontendUser.city;
+    delete frontendUser.state;
+    delete frontendUser.pincode;
+    delete frontendUser.goals;
+    delete frontendUser.hobbies;
+    delete frontendUser.achievements;
+    delete frontendUser.subjects;
+    delete frontendUser.profile_picture;
+
+    res.json({
+      success: true,
+      message: 'Profile picture uploaded successfully',
+      profilePictureUrl: fullUrl,
+      user: frontendUser
+    });
+
+  } catch (error) {
+    console.error('Upload profile picture error:', error);
+    
+    // Clean up uploaded file if it exists
+    if (req.file && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
+    
+    res.status(500).json({
+      success: false,
+      message: 'Failed to upload profile picture'
+    });
+  }
+});
+
+module.exports = router;

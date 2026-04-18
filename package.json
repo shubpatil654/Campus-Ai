@@ -1,0 +1,30 @@
+{
+  "name": "campus-ai",
+  "version": "1.0.0",
+  "description": "AI-Powered College Chatbot for Student Assistance & Information",
+  "main": "server/index.js",
+  "scripts": {
+    "dev": "concurrently \"npm run server\" \"npm run client\"",
+    "server": "cd server && npm run dev",
+    "client": "cd client && npm start",
+    "build": "cd client && npm run build",
+    "install-all": "npm install && cd server && npm install && cd ../client && npm install",
+    "vercel-build": "cd client && npm install && npm run build"
+  },
+  "keywords": [
+    "college",
+    "chatbot",
+    "ai",
+    "education",
+    "campus"
+  ],
+  "author": "CampusAI Team",
+  "license": "MIT",
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.2",
+    "multer": "^2.0.2"
+  }
+}

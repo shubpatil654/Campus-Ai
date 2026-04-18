@@ -1,0 +1,284 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  *, *::before, *::after {
+    @apply border-gray-700;
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  html {
+    margin: 0 !important;
+    padding: 0 !important;
+    height: 100% !important;
+    line-height: 1.15;
+    -webkit-text-size-adjust: 100%;
+    @apply scroll-smooth;
+  }
+  
+  body {
+    margin: 0 !important;
+    padding: 0 !important;
+    height: 100% !important;
+    line-height: 1.5;
+    @apply bg-gray-900 text-gray-100 font-sans;
+  }
+  
+  #root {
+    margin: 0 !important;
+    padding: 0 !important;
+    height: 100% !important;
+    display: flex;
+    flex-direction: column;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-gradient-to-r from-yellow-400 to-orange-500 text-black font-bold py-2 px-4 rounded-lg transition-all duration-300 hover:shadow-lg hover:shadow-orange-500/25 transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2 focus:ring-offset-gray-900;
+  }
+  
+  .btn-secondary {
+    @apply bg-gray-700/50 backdrop-blur-sm hover:bg-gray-600/50 text-gray-100 font-bold py-2 px-4 rounded-lg transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-yellow-400 focus:ring-offset-2 focus:ring-offset-gray-900;
+  }
+  
+  .btn-outline {
+    @apply border-2 border-yellow-400/50 text-yellow-400 hover:bg-yellow-400/10 hover:border-yellow-400 font-bold py-2 px-4 rounded-lg transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-yellow-400 focus:ring-offset-2 focus:ring-offset-gray-900;
+  }
+  
+  .card {
+    @apply bg-gray-800/50 backdrop-blur-sm border border-yellow-400/20 rounded-xl shadow-lg hover:border-yellow-400/40 transition-all duration-300;
+  }
+  
+  .input-field {
+    @apply bg-gray-800/50 backdrop-blur-sm border border-yellow-400/20 text-gray-100 placeholder-gray-400 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-yellow-400 focus:border-transparent transition-all duration-200;
+  }
+  
+  .sidebar {
+    @apply bg-gray-800/50 backdrop-blur-sm border-r border-yellow-400/20;
+  }
+  
+  .nav-link {
+    @apply flex items-center px-4 py-2 text-gray-300 hover:text-yellow-400 hover:bg-yellow-400/10 rounded-lg transition-all duration-200;
+  }
+  
+  .nav-link.active {
+    @apply bg-gradient-to-r from-yellow-400 to-orange-500 text-black font-bold;
+  }
+  
+  .chat-message {
+    @apply p-4 rounded-lg mb-4 max-w-3xl;
+  }
+  
+  .chat-message.user {
+    @apply bg-gradient-to-r from-yellow-400 to-orange-500 text-black ml-auto;
+  }
+  
+  .chat-message.bot {
+    @apply bg-gray-700/50 backdrop-blur-sm text-gray-100;
+  }
+  
+  .gradient-bg {
+    @apply bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900;
+  }
+  
+  .glass-effect {
+    @apply bg-gray-800/50 backdrop-blur-sm border border-yellow-400/20;
+  }
+}
+
+@layer utilities {
+  .text-gradient {
+    @apply bg-gradient-to-r from-yellow-400 to-orange-500 bg-clip-text text-transparent;
+  }
+  
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+  
+  .animate-pulse-slow {
+    animation: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+  
+  .shadow-glow {
+    box-shadow: 0 0 20px rgba(251, 191, 36, 0.3);
+  }
+  
+  .shadow-orange-glow {
+    box-shadow: 0 0 30px rgba(249, 115, 22, 0.4);
+  }
+  
+  .line-clamp-1 {
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 1;
+  }
+  
+  .line-clamp-2 {
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+  
+  .line-clamp-3 {
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-gray-800;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-gray-600 rounded-full;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-gray-500;
+}
+
+/* Leaflet map customization */
+.leaflet-container {
+  @apply bg-gray-900;
+}
+
+.leaflet-popup-content-wrapper {
+  @apply bg-gray-800 border border-yellow-400/20;
+}
+
+.leaflet-popup-content {
+  @apply text-gray-100;
+}
+
+.leaflet-popup-tip {
+  @apply bg-gray-800;
+}
+
+.leaflet-control-zoom {
+  border: none !important;
+  background: rgba(31, 41, 55, 0.8) !important;
+  backdrop-filter: blur(8px);
+}
+
+.leaflet-control-zoom a {
+  background: rgba(31, 41, 55, 0.9) !important;
+  border: 1px solid rgba(251, 191, 36, 0.2) !important;
+  color: #fbbf24 !important;
+  transition: all 0.3s ease;
+}
+
+.leaflet-control-zoom a:hover {
+  background: rgba(251, 191, 36, 0.1) !important;
+  color: #fbbf24 !important;
+}
+
+.leaflet-control-attribution {
+  background: rgba(31, 41, 55, 0.8) !important;
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(251, 191, 36, 0.2) !important;
+  color: #fbbf24 !important;
+  font-size: 12px !important;
+}
+
+/* Light mode map styles */
+.leaflet-container.light-mode {
+  @apply bg-white;
+}
+
+.leaflet-container.light-mode .leaflet-popup-content-wrapper {
+  @apply bg-white border border-gray-300;
+}
+
+.leaflet-container.light-mode .leaflet-popup-content {
+  @apply text-gray-800;
+}
+
+.leaflet-container.light-mode .leaflet-popup-tip {
+  @apply bg-white;
+}
+
+.leaflet-container.light-mode .leaflet-control-zoom {
+  background: rgba(255, 255, 255, 0.9) !important;
+  border: 1px solid rgba(0, 0, 0, 0.1) !important;
+}
+
+.leaflet-container.light-mode .leaflet-control-zoom a {
+  background: rgba(255, 255, 255, 0.95) !important;
+  border: 1px solid rgba(0, 0, 0, 0.1) !important;
+  color: #374151 !important;
+}
+
+.leaflet-container.light-mode .leaflet-control-zoom a:hover {
+  background: rgba(0, 0, 0, 0.05) !important;
+  color: #1f2937 !important;
+}
+
+.leaflet-container.light-mode .leaflet-control-attribution {
+  background: rgba(255, 255, 255, 0.9) !important;
+  border: 1px solid rgba(0, 0, 0, 0.1) !important;
+  color: #374151 !important;
+}
+
+/* Animations */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(-20px) translateX(-50%);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) translateX(-50%);
+  }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.5s ease-out;
+}
+
+/* Custom popup styles for college markers */
+.leaflet-popup-content-wrapper {
+  background: transparent !important;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5) !important;
+  border-radius: 12px !important;
+  padding: 0 !important;
+}
+
+.leaflet-popup-content {
+  margin: 0 !important;
+  border-radius: 12px !important;
+  overflow: hidden;
+}
+
+.leaflet-popup-tip {
+  background: linear-gradient(135deg, #1f2937, #374151) !important;
+  border: none !important;
+}
+
+.custom-div-icon {
+  background: transparent !important;
+  border: none !important;
+}
+
+/* Hover effect for markers */
+.custom-div-icon:hover {
+  transform: scale(1.1);
+  transition: transform 0.2s ease;
+}
